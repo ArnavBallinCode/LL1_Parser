@@ -1,0 +1,187 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=1.7cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{multicol}
+\usepackage{xcolor}
+\setlist{nosep,leftmargin=1.4em}
+\titleformat{\section}{\large\bfseries}{\thesection.}{0.5em}{}
+\titlespacing*{\section}{0pt}{8pt}{3pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+\newcommand{\eps}{$\varepsilon$}
+\newcommand{\ar}{$\rightarrow$}
+\newcommand{\tk}[1]{\texttt{#1}}
+\pagestyle{plain}
+
+\begin{document}
+
+\begin{center}
+{\LARGE\bfseries LL(1) Parser in C++}\\[3pt]
+{\large Project Report}\\[3pt]
+\textbf{Name:} Arnav Angarkar \qquad \textbf{Roll No.:} 24BCS015
+\end{center}
+
+\section{Introduction}
+An \textbf{LL(1) parser} is a top-down, table-driven parser: it scans input \textbf{L}eft to right,
+produces a \textbf{L}eftmost derivation, and uses \textbf{1} token of lookahead.
+This project implements one in C++ from scratch: it computes FIRST and FOLLOW sets, builds the
+parsing table, and parses input with an explicit stack, printing every step.
+
+\section{Grammar}
+The parser accepts arithmetic expressions with \tk{+}, \tk{*}, brackets and identifiers, e.g.\ \tk{a + b * c}.
+
+\begin{center}
+\begin{tabular}{@{}l@{\hspace{2.5cm}}l@{}}
+(0) E \ar\ T E$'$ & (4) T$'$ \ar\ * F T$'$ \\
+(1) E$'$ \ar\ + T E$'$ & (5) T$'$ \ar\ \eps \\
+(2) E$'$ \ar\ \eps & (6) F \ar\ ( E ) \\
+(3) T \ar\ F T$'$ & (7) F \ar\ id \\
+\end{tabular}
+\end{center}
+
+\textbf{Non-terminals:} E, E$'$, T, T$'$, F (start symbol E). \quad
+\textbf{Terminals:} \tk{+ * ( ) id}, plus \tk{\$} = end of input. \quad \eps\ = empty string.
+
+The original grammar \tk{E \ar\ E + T | T} is \textbf{left recursive}, which sends a top-down parser into an
+infinite loop; it is removed by introducing E$'$ and T$'$. Since \tk{*} is handled at a lower level (T) than
+\tk{+} (E), multiplication has higher precedence.
+
+\section{FIRST and FOLLOW sets}
+\begin{multicols}{2}
+\textbf{FIRST(X)} = terminals that can appear \emph{first} in a string derived from X.
+\begin{enumerate}
+\item X is a terminal \ar\ FIRST(X) = \{X\}.
+\item For A \ar\ X$_1$X$_2$\dots X$_n$, add FIRST(X$_1$) without \eps; if X$_1$ can be \eps, also add FIRST(X$_2$), and so on.
+\item If all X$_i$ can be \eps\ (or A \ar\ \eps), add \eps.
+\end{enumerate}
+\columnbreak
+\textbf{FOLLOW(A)} = terminals that can come \emph{right after} A.
+\begin{enumerate}
+\item Put \tk{\$} in FOLLOW(E), the start symbol.
+\item For A \ar\ \dots B $\beta$, add FIRST($\beta$) without \eps\ to FOLLOW(B).
+\item If $\beta$ can be \eps\ (or B is last), add FOLLOW(A) to FOLLOW(B).
+\end{enumerate}
+\end{multicols}
+\vspace{-6pt}
+\tk{computeFirst()} and \tk{computeFollow()} apply these rules repeatedly until no set changes (fixed-point iteration). Output:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Non-terminal & FIRST & FOLLOW \\
+\midrule
+E    & \{ (, id \}   & \{ \$, ) \} \\
+E$'$ & \{ +, \eps\ \} & \{ \$, ) \} \\
+T    & \{ (, id \}   & \{ \$, ), + \} \\
+T$'$ & \{ *, \eps\ \} & \{ \$, ), + \} \\
+F    & \{ (, id \}   & \{ \$, ), *, + \} \\
+\bottomrule
+\end{tabular}
+\end{center}
+E.g.\ in T \ar\ F T$'$: FIRST(T$'$) = \{*\} is added to FOLLOW(F), and since T$'$ \ar\ \eps, FOLLOW(T) is added too.
+
+\section{Parsing table}
+For every rule A \ar\ $\alpha$: (1) for each terminal \emph{a} in FIRST($\alpha$), put the rule in M[A,\,a];
+(2) if \eps\ is in FIRST($\alpha$), put the rule in M[A,\,b] for every \emph{b} in FOLLOW(A).
+A cell with two rules would mean a conflict; \tk{putInTable()} detects this. No conflicts arise, so the grammar
+\textbf{is LL(1)}. Blank cells (--) are syntax errors.
+
+\begin{center}
+\small
+\begin{tabular}{l*{6}{c}}
+\toprule
+ & + & * & ( & ) & id & \$ \\
+\midrule
+E    & -- & -- & E\ar T E$'$ & -- & E\ar T E$'$ & -- \\
+E$'$ & E$'$\ar + T E$'$ & -- & -- & E$'$\ar \eps & -- & E$'$\ar \eps \\
+T    & -- & -- & T\ar F T$'$ & -- & T\ar F T$'$ & -- \\
+T$'$ & T$'$\ar \eps & T$'$\ar * F T$'$ & -- & T$'$\ar \eps & -- & T$'$\ar \eps \\
+F    & -- & -- & F\ar ( E ) & -- & F\ar id & -- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Parsing algorithm and example}
+\tk{tokenize()} maps every name/number to \tk{id} and appends \tk{\$} (\tk{a + b*c} \ar\ \tk{id + id * id \$}).
+With the stack initialised to \tk{\$ E}, \tk{parse()} repeats:
+\begin{enumerate}
+\item Top = \tk{\$} and token = \tk{\$} \ar\ \textbf{ACCEPT}.
+\item Top is a terminal: if it equals the token, pop it and move to the next token (\emph{match}); else \textbf{ERROR}.
+\item Top is a non-terminal A: look up M[A, token]. Blank \ar\ \textbf{ERROR}. Otherwise pop A and push the
+rule's right side \emph{in reverse}, so its first symbol is on top (\eps\ is never pushed).
+\end{enumerate}
+
+\begin{minipage}[t]{0.56\textwidth}
+\vspace{0pt}
+\textbf{Trace for} \tk{id + id * id} (stack top on the right):\\[2pt]
+\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+Stack & Input & Action \\
+\midrule
+\$ E & id + id * id \$ & E \ar\ T E$'$ \\
+\$ E$'$ T & id + id * id \$ & T \ar\ F T$'$ \\
+\$ E$'$ T$'$ F & id + id * id \$ & F \ar\ id \\
+\$ E$'$ T$'$ id & id + id * id \$ & match id \\
+\$ E$'$ T$'$ & + id * id \$ & T$'$ \ar\ \eps \\
+\$ E$'$ & + id * id \$ & E$'$ \ar\ + T E$'$ \\
+\$ E$'$ T + & + id * id \$ & match + \\
+\$ E$'$ T & id * id \$ & T \ar\ F T$'$ \\
+\$ E$'$ T$'$ F & id * id \$ & F \ar\ id \\
+\$ E$'$ T$'$ id & id * id \$ & match id \\
+\$ E$'$ T$'$ & * id \$ & T$'$ \ar\ * F T$'$ \\
+\$ E$'$ T$'$ F * & * id \$ & match * \\
+\$ E$'$ T$'$ F & id \$ & F \ar\ id \\
+\$ E$'$ T$'$ id & id \$ & match id \\
+\$ E$'$ T$'$ & \$ & T$'$ \ar\ \eps \\
+\$ E$'$ & \$ & E$'$ \ar\ \eps \\
+\$ & \$ & \textbf{ACCEPT} \\
+\bottomrule
+\end{tabular}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.41\textwidth}
+\vspace{0pt}
+\textbf{Error cases}\\[2pt]
+\tk{id + * id}: top = T, token = \tk{*}; M[T, *] is blank \ar\ \emph{``no rule for [T, *]''}, rejected.
+
+\medskip
+\tk{(a+b}: top = \tk{)}, token = \tk{\$} \ar\ \emph{``expected ')' but got '\$'''}, rejected.
+
+\medskip
+\textbf{Accepted inputs tested:} \tk{id + id * id}, \tk{(id + id) * id}, \tk{a+(b*c)}.
+\end{minipage}
+
+\section{Program structure and conclusion}
+Single file \tk{ll1\_parser.cpp}, using only \tk{vector}, \tk{map}, \tk{set} and \tk{string}. Each production is a
+\tk{struct Rule} (\tk{left}: string, \tk{right}: list of symbols).
+
+\begin{center}
+\small
+\begin{tabular}{@{}>{\ttfamily}l l@{}}
+\toprule
+\normalfont Function & What it does \\
+\midrule
+setupGrammar(), addRule() & Store the 8 rules, terminals and non-terminals \\
+isNonTerminal() & Tell whether a symbol is a rule name \\
+firstOfList() & FIRST of a list of symbols (used by FIRST, FOLLOW and the table) \\
+computeFirst(), computeFollow() & FIRST / FOLLOW of every non-terminal, repeated until no change \\
+buildTable(), putInTable() & Fill the LL(1) table and detect conflicts \\
+tokenize() & Turn input text into tokens ending with \$ \\
+parse() & Run the stack algorithm and print each step \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Run:} \tk{g++ ll1\_parser.cpp -o ll1\_parser \&\& ./ll1\_parser} --- prints the grammar, FIRST, FOLLOW, the table
+and three sample parses, then accepts user input until \tk{exit}.
+
+\textbf{Conclusion:} the parser correctly accepts valid expressions and rejects invalid ones with a precise
+error. Since FIRST, FOLLOW and the table are computed, not hard-coded, any LL(1) grammar can be parsed by
+editing only \tk{setupGrammar()}.
+
+\end{document}
